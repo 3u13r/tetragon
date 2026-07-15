@@ -45,7 +45,7 @@ func StartSensorManagerWithPF(
 ) (*Manager, error) {
 	colMap := newCollectionMap()
 
-	handler, err := newHandler(pfState, colMap, bpfDir)
+	handler, err := newHandler(pfState, colMap, bpfDir, option.Config.RequireSignature, option.Config.KeyringID)
 	if err != nil {
 		return nil, err
 	}

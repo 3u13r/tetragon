@@ -153,6 +153,9 @@ const (
 	KeyServerTLSKeyFile           = "server-tls-key-file"
 	KeyServerTLSClientCAFiles     = "server-tls-client-ca-files"
 	KeyServerTLSRequireClientCert = "server-tls-require-client-cert"
+
+	KeyRequireSignature = "require-signature"
+	KeyKeyringID        = "keyring-id"
 )
 
 type UsernameMetadaCode int
@@ -333,6 +336,9 @@ func ReadAndSetFlags() error {
 	if err := validateServerTLSConfig(Config); err != nil {
 		return err
 	}
+
+	Config.RequireSignature = viper.GetBool(KeyRequireSignature)
+	Config.KeyringID = int32(viper.GetInt(KeyKeyringID))
 
 	return nil
 }
@@ -590,4 +596,7 @@ func AddFlags(flags *pflag.FlagSet) {
 	flags.String(KeyServerTLSKeyFile, "", "Path to the PEM-encoded private key matching --"+KeyServerTLSCertFile+". Required when --"+KeyServerTLSCertFile+" is set.")
 	flags.StringSlice(KeyServerTLSClientCAFiles, []string{}, "Paths to PEM-encoded CA bundles used to verify client certificates. Required when --"+KeyServerTLSRequireClientCert+" is true.")
 	flags.Bool(KeyServerTLSRequireClientCert, false, "Require and verify client certificates (mTLS). Requires --"+KeyServerTLSClientCAFiles+".")
+
+	flags.Bool(KeyRequireSignature, false, "Require tracing policies to carry a signature verifiable by a key in --"+KeyKeyringID+".")
+	flags.Int(KeyKeyringID, -3, "Keyctl serial number of the keyring used to verify tracing policy signatures (default -3, KEY_SPEC_SESSION_KEYRING). Only used when --"+KeyRequireSignature+" is true.")
 }

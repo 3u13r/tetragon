@@ -149,6 +149,12 @@ type TracingPolicySpec struct {
 	// SelectorsMacros is used to define selectors macros, which can be used
 	// in probes/hooks selectors by their names.
 	SelectorsMacros map[string]KProbeSelector `json:"selectorsMacros,omitempty"`
+
+	// +kubebuilder:validation:Optional
+	// A list of signatures to verify before loading the policy. If specified,
+	// the policy will only be loaded if at least one of the signatures can be
+	// verified with a key in the keyring.
+	Signatures []string `json:"signatures,omitempty"`
 }
 
 func (tp *TracingPolicy) TpName() string {

@@ -4,6 +4,8 @@
 package sensors
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/cilium/tetragon/api/v1/tetragon"
 	"github.com/cilium/tetragon/pkg/k8s/apis/cilium.io/v1alpha1"
+	"github.com/cilium/tetragon/pkg/keyring"
 	"github.com/cilium/tetragon/pkg/policyfilter"
 	"github.com/cilium/tetragon/pkg/tracingpolicy"
 )
@@ -22,8 +25,10 @@ const (
 )
 
 type handler struct {
-	collections *collectionMap
-	bpfDir      string
+	collections      *collectionMap
+	bpfDir           string
+	requireSignature bool
+	keyringID        int32
 
 	nextPolicyID uint64
 	pfState      policyfilter.State
@@ -33,11 +38,15 @@ type handler struct {
 func newHandler(
 	pfState policyfilter.State,
 	collections *collectionMap,
-	bpfDir string) (*handler, error) {
+	bpfDir string,
+	requireSignature bool,
+	keyringID int32) (*handler, error) {
 	return &handler{
-		collections: collections,
-		bpfDir:      bpfDir,
-		pfState:     pfState,
+		collections:      collections,
+		bpfDir:           bpfDir,
+		requireSignature: requireSignature,
+		keyringID:        keyringID,
+		pfState:          pfState,
 		// NB: we are using policy ids for filtering, so we start with
 		// the first valid id. This is because value 0 is reserved to
 		// indicate that there is no filtering in the bpf side.
@@ -75,6 +84,13 @@ func SensorsFromPolicy(tp tracingpolicy.TracingPolicy, filterID policyfilter.Pol
 func (h *handler) addTracingPolicy(op *tracingPolicyAdd) error {
 	h.collections.mu.Lock()
 	defer h.collections.mu.Unlock()
+
+	if h.requireSignature {
+		if err := h.verifyTracingPolicySignature(op.tp); err != nil {
+			return err
+		}
+	}
+
 	collections := h.collections.c
 	// allow overriding existing policy collection that resulted in an error
 	// during the loading state
@@ -481,4 +497,30 @@ func sensorsFromPolicyHandlers(tp tracingpolicy.TracingPolicy, filterID policyfi
 
 	sortSensors(sensors)
 	return sensors, nil
+}
+
+func (h *handler) verifyTracingPolicySignature(tp tracingpolicy.TracingPolicy) error {
+	tpBytes, err := canonicalTracingPolicySpecBytes(tp.TpSpec())
+	if err != nil {
+		return fmt.Errorf("failed to marshal tracing policy: %w", err)
+	}
+
+	// keyring.VerifySignatures ultimately calls KEYCTL_PKEY_VERIFY with
+	// "hash=sha256", which expects the SHA-256 digest of the signed data,
+	// not the raw data itself.
+	digest := sha256.Sum256(tpBytes)
+
+	if err := keyring.VerifySignatures(h.keyringID, digest[:], tp.TpSpec().Signatures); err != nil {
+		return fmt.Errorf("error verifying tracing policy signature: %w", err)
+	}
+	return nil
+}
+
+// canonicalTracingPolicySpecBytes returns the canonical byte representation of
+// spec (with Signatures cleared) that is hashed and signed/verified by
+// verifyTracingPolicySignature.
+func canonicalTracingPolicySpecBytes(spec *v1alpha1.TracingPolicySpec) ([]byte, error) {
+	specCopy := spec.DeepCopy()
+	specCopy.Signatures = nil
+	return json.Marshal(specCopy)
 }

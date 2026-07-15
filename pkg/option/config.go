@@ -156,6 +156,15 @@ type config struct {
 	// its ClientAuth policy to RequireAndVerifyClientCert; ServerTLSClientCAFiles
 	// must be non-empty.
 	ServerTLSRequireClientCert bool
+
+	// RequireSignature toggles the requirement for tracing policy signatures.
+	RequireSignature bool
+
+	// KeyringID is the keyctl serial number of the keyring used to verify
+	// tracing policy signatures. It accepts either a real key serial or one
+	// of the special keyctl values (e.g. -3 for KEY_SPEC_SESSION_KEYRING).
+	// Only used when RequireSignature is true.
+	KeyringID int32
 }
 
 var (
