@@ -1,17 +1,47 @@
 name: BPF Unit Tests
 on:
-  pull_request:
-    paths:
-      - 'bpf/**'
-      - '.github/workflows/bpf-unit-tests.yml'
+  workflow_dispatch:
+    inputs:
+      PR-number:
+        required: true
+        type: string
+        description: "Pull request number."
+      context-ref:
+        required: true
+        type: string
+        description: "Context in which the workflow runs. If the pull request is from a fork, this is the pull request target branch. Otherwise, this is the pull request branch so committers can test workflow changes directly."
+      SHA:
+        required: true
+        type: string
+        description: "SHA under test (head of the pull request branch)."
+      base-SHA:
+        required: true
+        type: string
+        description: "SHA of the base branch (target branch of the pull request)."
   push:
     branches:
       - main
     paths:
       - 'bpf/**'
 
+permissions:
+  contents: read
+
 jobs:
+  commit-status-start:
+    name: Commit Status Start
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Set initial commit status
+        uses: cilium/tetragon/.github/actions/set-commit-status@main
+        with:
+          sha: ${{ inputs.SHA || github.sha }}
+
   build:
+    needs: commit-status-start
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -19,6 +49,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      with:
+        ref: ${{ inputs.SHA || github.sha }}
 
     - name: Install Go
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -33,3 +65,16 @@ jobs:
 
     - name: Run BPF unit test
       run: make bpf-test BPFGOTESTFLAGS="-v"
+
+  merge-upload-and-status:
+    if: ${{ always() }}
+    name: Merge Upload and Status
+    needs: build
+    permissions:
+      contents: read
+      statuses: write
+    uses: ./.github/workflows/common-post-jobs.yml
+    with:
+      context-ref: ${{ inputs.context-ref || github.sha }}
+      sha: ${{ inputs.SHA || github.sha }}
+      success: ${{ needs.build.result == 'success' }}

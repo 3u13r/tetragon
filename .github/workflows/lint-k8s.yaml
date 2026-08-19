@@ -7,17 +7,44 @@ on:
     paths:
       - pkg/k8s/**
       - .github/workflows/lint-k8s.yaml
-  pull_request:
-    paths:
-      - pkg/k8s/**
-      - .github/workflows/lint-k8s.yaml
+  workflow_dispatch:
+    inputs:
+      PR-number:
+        description: "Pull request number."
+        required: true
+      context-ref:
+        description: "Context in which the workflow runs. If the pull request is from a fork, this is the pull request target branch. Otherwise, this is the pull request branch so committers can test workflow changes directly."
+        required: true
+      SHA:
+        description: "SHA under test (head of the pull request branch)."
+        required: true
+      base-SHA:
+        description: "SHA of the base branch (target branch of the pull request)."
+        required: true
+
+permissions:
+  contents: read
 
 jobs:
+  commit-status-start:
+    name: Commit Status Start
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Set initial commit status
+        uses: cilium/tetragon/.github/actions/set-commit-status@main
+        with:
+          sha: ${{ inputs.SHA || github.sha }}
+
   check-k8s-generated:
+    needs: commit-status-start
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ inputs.SHA || github.sha }}
           fetch-depth: 0
       - name: Install Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -39,11 +66,13 @@ jobs:
             echo "Please run 'make crds' and submit your changes."; exit 1
           fi
   check-crd-version:
+    needs: commit-status-start
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ inputs.SHA || github.sha }}
           fetch-depth: 0
       - name: Check for CRD changes and version update
         run: |
@@ -51,14 +80,14 @@ jobs:
           version_changed=0
 
           # Check for CRD changes
-          crd_changes=$(git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} -- pkg/k8s/apis/cilium.io/client/crds/v1alpha1/*.yaml)
+          crd_changes=$(git diff --name-only ${{ inputs.base-SHA }} ${{ inputs.SHA }} -- pkg/k8s/apis/cilium.io/client/crds/v1alpha1/*.yaml)
           if [ -n "$crd_changes" ]; then
             crd_changed=1
           fi
 
           # Check for version variable changes
 
-          old_version=$(git show ${{ github.event.pull_request.base.sha }}:pkg/k8s/apis/cilium.io/v1alpha1/version.go | sed -n 's/^const CustomResourceDefinitionSchemaVersion = "\(.*\)".*/\1/p')
+          old_version=$(git show ${{ inputs.base-SHA }}:pkg/k8s/apis/cilium.io/v1alpha1/version.go | sed -n 's/^const CustomResourceDefinitionSchemaVersion = "\(.*\)".*/\1/p')
           new_version=$(sed -n 's/^const CustomResourceDefinitionSchemaVersion = "\(.*\)".*/\1/p' pkg/k8s/apis/cilium.io/v1alpha1/version.go)
 
           echo "old_version=$old_version"
@@ -72,3 +101,18 @@ jobs:
             echo "Changes to the files pkg/k8s/apis/cilium.io/client/crds/v1alpha1/*.yaml requires CustomResourceDefinitionSchemaVersion to be updated in pkg/k8s/apis/cilium.io/v1alpha1/version.go"
             exit 1
           fi
+
+  merge-upload-and-status:
+    if: ${{ always() }}
+    name: Merge Upload and Status
+    needs:
+      - check-k8s-generated
+      - check-crd-version
+    permissions:
+      contents: read
+      statuses: write
+    uses: ./.github/workflows/common-post-jobs.yml
+    with:
+      context-ref: ${{ inputs.context-ref || github.sha }}
+      sha: ${{ inputs.SHA || github.sha }}
+      success: ${{ needs.check-k8s-generated.result == 'success' && (needs.check-crd-version.result == 'success' || needs.check-crd-version.result == 'skipped') }}

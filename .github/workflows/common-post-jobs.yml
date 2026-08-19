@@ -1,0 +1,56 @@
+name: Common Post Jobs
+
+on:
+  workflow_call:
+    inputs:
+      context-ref:
+        description: "Trusted ref used to load the calling workflow."
+        required: true
+        type: string
+      sha:
+        description: "SHA under test on which to publish the final commit status."
+        required: true
+        type: string
+      success:
+        description: "Whether all jobs in the calling workflow completed successfully."
+        required: true
+        type: boolean
+      status-context:
+        description: "Commit status context. Defaults to the calling workflow name."
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  actions: read
+  statuses: write
+
+jobs:
+  commit-status-final:
+    if: ${{ always() }}
+    name: Commit Status Final
+    runs-on: ubuntu-24.04
+    permissions:
+      statuses: write
+    steps:
+      - name: Set final commit status
+        uses: cilium/tetragon/.github/actions/set-commit-status@main # main
+        with:
+          sha: ${{ inputs.sha }}
+          status: ${{ inputs.success && 'success' || 'failure' }}
+          context: ${{ inputs.status-context }}
+
+  fail-workflow:
+    if: ${{ inputs.success == false }}
+    name: Fail job if result is failure
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail job if result is failure
+        # Besides reporting in the commit SHA if the test was or not successful,
+        # we should also report it in the workflow itself. This will allow to
+        # store the failure rate of the workflow on OpenSearch, instead of
+        # marking it as successful.
+        run: |
+          echo "::error::Workflow failed because one or more jobs failed"
+          exit 1

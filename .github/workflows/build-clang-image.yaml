@@ -1,20 +1,51 @@
 name: Build Clang Image
 
 on:
+  workflow_dispatch:
+    inputs:
+      PR-number:
+        required: true
+        type: string
+        description: "Pull request number."
+      context-ref:
+        required: true
+        type: string
+        description: "Context in which the workflow runs. If the pull request is from a fork, this is the pull request target branch. Otherwise, this is the pull request branch so committers can test workflow changes directly."
+      SHA:
+        required: true
+        type: string
+        description: "SHA under test (head of the pull request branch)."
+      base-SHA:
+        required: true
+        type: string
+        description: "SHA of the base branch (target branch of the pull request)."
   push:
     branches:
       - main
       - v*
     paths:
       - 'Dockerfile.clang'
-  pull_request:
-    paths:
-      - 'Dockerfile.clang'
-      - '.github/workflows/build-clang-image.yaml'
+
+permissions:
+  contents: read
 
 jobs:
+  commit-status-start:
+    name: Commit Status Start
+    if: ${{ inputs.PR-number }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Set initial commit status
+        uses: cilium/tetragon/.github/actions/set-commit-status@main
+        with:
+          sha: ${{ inputs.SHA || github.sha }}
+
   build-preview:
-    if: github.event_name == 'pull_request'
+    if: ${{ inputs.PR-number }}
+    needs: commit-status-start
     runs-on: ubuntu-24.04
     steps:
       # https://github.com/docker/setup-qemu-action
@@ -29,16 +60,12 @@ jobs:
 
       - name: Getting image tag
         id: tag
-        run: |
-          if [ ${{ github.event.pull_request.head.sha }} != "" ]; then
-            echo "tag=${{ github.event.pull_request.head.sha }}" >> $GITHUB_OUTPUT
-          else
-            echo "tag=${{ github.sha }}" >> $GITHUB_OUTPUT
-          fi
+        run: echo "tag=${{ inputs.SHA || github.sha }}" >> $GITHUB_OUTPUT
 
       - name: Checkout source code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ inputs.SHA || github.sha }}
           persist-credentials: false
           fetch-depth: 0
 
@@ -82,16 +109,12 @@ jobs:
 
       - name: Getting image tag
         id: tag
-        run: |
-          if [ ${{ github.event.pull_request.head.sha }} != "" ]; then
-            echo "tag=${{ github.event.pull_request.head.sha }}" >> $GITHUB_OUTPUT
-          else
-            echo "tag=${{ github.sha }}" >> $GITHUB_OUTPUT
-          fi
+        run: echo "tag=${{ inputs.SHA || github.sha }}" >> $GITHUB_OUTPUT
 
       - name: Checkout Source Code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ inputs.SHA || github.sha }}
           persist-credentials: false
           fetch-depth: 0
 
@@ -195,4 +218,17 @@ jobs:
         run: |
           cd image-digest/
           find -type f | sort | xargs -d '\n' cat
+
+  merge-upload-and-status:
+    if: ${{ always() && inputs.PR-number }}
+    name: Merge Upload and Status
+    needs: build-preview
+    permissions:
+      contents: read
+      statuses: write
+    uses: ./.github/workflows/common-post-jobs.yml
+    with:
+      context-ref: ${{ inputs.context-ref || github.sha }}
+      sha: ${{ inputs.SHA || github.sha }}
+      success: ${{ needs.build-preview.result == 'success' }}
 

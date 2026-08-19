@@ -1,21 +1,46 @@
 name: Check images digest for multi-arch
 
 on:
-  pull_request:
-    paths:
-      - '**[dD]ockerfile**'
-      - '.github/workflow/digestcheck.yaml'
-      - 'contrib/digestcheck.sh'
-      - '!**vendor**'
+  workflow_dispatch:
+    inputs:
+      PR-number:
+        description: "Pull request number."
+        required: true
+      context-ref:
+        description: "Context in which the workflow runs. If the pull request is from a fork, this is the pull request target branch. Otherwise, this is the pull request branch so committers can test workflow changes directly."
+        required: true
+      SHA:
+        description: "SHA under test (head of the pull request branch)."
+        required: true
+      base-SHA:
+        description: "SHA of the base branch (target branch of the pull request)."
+        required: true
+
+permissions:
+  contents: read
 
 jobs:
+  commit-status-start:
+    name: Commit Status Start
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Set initial commit status
+        uses: cilium/tetragon/.github/actions/set-commit-status@main
+        with:
+          sha: ${{ inputs.SHA || github.sha }}
+
   check:
+    needs: commit-status-start
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       with:
+        ref: ${{ inputs.SHA || github.sha }}
         fetch-depth: 0   # because we also need the main branch
 
     - name: Install crane
@@ -24,9 +49,22 @@ jobs:
       run: |
         curl -sL "https://github.com/google/go-containerregistry/releases/download/$VERSION/go-containerregistry_Linux_x86_64.tar.gz" > go-containerregistry.tar.gz
         tar -zxvf go-containerregistry.tar.gz -C /usr/local/bin/ crane
-      
+
     - name: Check digests
       env:
         TERM: xterm-color
-        BASE_REF: ${{ github.base_ref }}
-      run: git diff --name-only origin/$BASE_REF | xargs ./contrib/digestcheck.sh
+        BASE_SHA: ${{ inputs.base-SHA }}
+      run: git diff --name-only "$BASE_SHA" | xargs ./contrib/digestcheck.sh
+
+  merge-upload-and-status:
+    if: ${{ always() }}
+    name: Merge Upload and Status
+    needs: check
+    permissions:
+      contents: read
+      statuses: write
+    uses: ./.github/workflows/common-post-jobs.yml
+    with:
+      context-ref: ${{ inputs.context-ref || github.sha }}
+      sha: ${{ inputs.SHA || github.sha }}
+      success: ${{ needs.check.result == 'success' }}

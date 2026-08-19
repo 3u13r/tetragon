@@ -1,23 +1,51 @@
 name: Run veristat compare
 on:
-  pull_request:
-    paths:
-      - 'bpf/**'
+  workflow_dispatch:
+    inputs:
+      PR-number:
+        description: "Pull request number."
+        required: true
+      context-ref:
+        description: "Context in which the workflow runs. If the pull request is from a fork, this is the pull request target branch. Otherwise, this is the pull request branch so committers can test workflow changes directly."
+        required: true
+      SHA:
+        description: "SHA under test (head of the pull request branch)."
+        required: true
+      base-SHA:
+        description: "SHA of the base branch (target branch of the pull request)."
+        required: true
+
+permissions:
+  contents: read
 
 jobs:
+  commit-status-start:
+    name: Commit Status Start
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Set initial commit status
+        uses: cilium/tetragon/.github/actions/set-commit-status@main
+        with:
+          sha: ${{ inputs.SHA || github.sha }}
+
   veristat-compare:
+    needs: commit-status-start
     runs-on: ubuntu-latest
     steps:
       - name: Checkout branch
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           path: branch
+          ref: ${{ inputs.SHA || github.sha }}
 
       - name: Checkout base ref
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           path: base
-          ref: ${{ github.base_ref }}
+          ref: ${{ inputs.base-SHA }}
 
       - name: Build BPF programs
         run: |
@@ -30,3 +58,16 @@ jobs:
           compare: true
           baseline-programs: "base/bpf/objs/*.o"
           comparison-programs: "branch/bpf/objs/*.o"
+
+  merge-upload-and-status:
+    if: ${{ always() }}
+    name: Merge Upload and Status
+    needs: veristat-compare
+    permissions:
+      contents: read
+      statuses: write
+    uses: ./.github/workflows/common-post-jobs.yml
+    with:
+      context-ref: ${{ inputs.context-ref || github.sha }}
+      sha: ${{ inputs.SHA || github.sha }}
+      success: ${{ needs.veristat-compare.result == 'success' }}

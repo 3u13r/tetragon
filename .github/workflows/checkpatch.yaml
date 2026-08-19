@@ -1,19 +1,43 @@
 name: Check pull request commits
 on:
-  pull_request:
+  workflow_dispatch:
+    inputs:
+      PR-number:
+        description: "Pull request number."
+        required: true
+      context-ref:
+        description: "Context in which the workflow runs. If the pull request is from a fork, this is the pull request target branch. Otherwise, this is the pull request branch so committers can test workflow changes directly."
+        required: true
+      SHA:
+        description: "SHA under test (head of the pull request branch)."
+        required: true
+      base-SHA:
+        description: "SHA of the base branch (target branch of the pull request)."
+        required: false
+
+permissions:
+  contents: read
 
 jobs:
+  commit-status-start:
+    name: Commit Status Start
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Set initial commit status
+        uses: cilium/tetragon/.github/actions/set-commit-status@main
+        with:
+          sha: ${{ inputs.SHA || github.sha }}
+
   checkpatch:
+    needs: commit-status-start
     runs-on: ubuntu-latest
-    # Skip the workflow for Renovate PRs.
-    # One issue checkpatch checks is whether the commit subject is not too long. Renovate commits tend to have long
-    # subjects for a reason (e.g. including the digest). Other checkpatch checks are either ignored or relevant only
-    # for BPF code, so it's fine to skip the entire workflow for Renovate PRs. If there are more checks added then we
-    # should revisit it (and maybe update cilium-checkpatch).
-    if: ${{ github.event.pull_request.user.login != 'cilium-renovate[bot]' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ inputs.SHA || github.sha }}
           persist-credentials: false
           fetch-depth: 0
       - name: Run checkpatch.pl
@@ -21,3 +45,16 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           make checkpatch || (echo "Run 'make checkpatch' locally to investigate reports"; exit 1)
+
+  merge-upload-and-status:
+    if: ${{ always() }}
+    name: Merge Upload and Status
+    needs: checkpatch
+    permissions:
+      contents: read
+      statuses: write
+    uses: ./.github/workflows/common-post-jobs.yml
+    with:
+      context-ref: ${{ inputs.context-ref || github.sha }}
+      sha: ${{ inputs.SHA || github.sha }}
+      success: ${{ needs.checkpatch.result == 'success' }}

@@ -1,17 +1,40 @@
 name: Check docs links
 
 on:
-  pull_request:
-    paths:
-      - 'README.md'
-      - 'docs/content/**.md'
-      - '.github/lychee.toml'
-      - '.github/workflows/check-links-pr.yaml'
-    branches: 
-      - 'main'
+  workflow_dispatch:
+    inputs:
+      PR-number:
+        required: true
+        type: string
+        description: "Pull request number."
+      context-ref:
+        required: true
+        type: string
+        description: "Context in which the workflow runs. If the pull request is from a fork, this is the pull request target branch. Otherwise, this is the pull request branch so committers can test workflow changes directly."
+      SHA:
+        required: true
+        type: string
+        description: "SHA under test (head of the pull request branch)."
+      base-SHA:
+        required: true
+        type: string
+        description: "SHA of the base branch (target branch of the pull request)."
 
 jobs:
+  commit-status-start:
+    name: Commit Status Start
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Set initial commit status
+        uses: cilium/tetragon/.github/actions/set-commit-status@main
+        with:
+          sha: ${{ inputs.SHA || github.sha }}
+
   links-checker:
+    needs: commit-status-start
     runs-on: ubuntu-latest
     permissions: {} # lychee uses the GITHUB_TOKEN for authentication only
     env:
@@ -20,6 +43,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ inputs.SHA || github.sha }}
           fetch-depth: 0         # Fetch all history for .GitInfo and .Lastmod
 
       - name: Setup Hugo
@@ -31,15 +55,16 @@ jobs:
       - name: Retrieve additions and replace GitHub main links with local branch
         shell: bash
         env:
-          REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          BRANCH: ${{ github.event.pull_request.head.ref }}
+          BASE_SHA: ${{ inputs.base-SHA }}
+          REPO: ${{ github.repository }}
+          REVISION: ${{ inputs.SHA }}
         run: |
-          git diff -U0 origin/${{ github.base_ref }} -- docs/content README.md | { grep ^\+[^+] || true; } > $PATCH_FILE
+          git diff -U0 "$BASE_SHA" -- docs/content README.md | { grep ^\+[^+] || true; } > $PATCH_FILE
 
-          sed -i "s#/cilium/tetragon/tree/main#/$REPO/tree/$BRANCH#g" $PATCH_FILE
-          sed -i "s#/cilium/tetragon/blob/main#/$REPO/blob/$BRANCH#g" $PATCH_FILE
-          sed -i "s#/cilium/tetragon/raw/main#/$REPO/raw/$BRANCH#g" $PATCH_FILE
-          sed -i "s#/cilium/tetragon/main#/$REPO/$BRANCH#g" $PATCH_FILE
+          sed -i "s#/cilium/tetragon/tree/main#/$REPO/tree/$REVISION#g" $PATCH_FILE
+          sed -i "s#/cilium/tetragon/blob/main#/$REPO/blob/$REVISION#g" $PATCH_FILE
+          sed -i "s#/cilium/tetragon/raw/main#/$REPO/raw/$REVISION#g" $PATCH_FILE
+          sed -i "s#/cilium/tetragon/main#/$REPO/$REVISION#g" $PATCH_FILE
 
           cat $PATCH_FILE
 
@@ -63,3 +88,16 @@ jobs:
         with:
           args: --config .github/lychee.toml --base http://localhost:1313 $PATCH_FILE
           failIfEmpty: false # this can happen as we are checking diffs
+
+  merge-upload-and-status:
+    if: ${{ always() }}
+    name: Merge Upload and Status
+    needs: links-checker
+    permissions:
+      contents: read
+      statuses: write
+    uses: ./.github/workflows/common-post-jobs.yml
+    with:
+      context-ref: ${{ inputs.context-ref || github.sha }}
+      sha: ${{ inputs.SHA || github.sha }}
+      success: ${{ needs.links-checker.result == 'success' }}

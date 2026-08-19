@@ -1,38 +1,80 @@
 name: Integration Test
 on:
-  pull_request:
-    types:
-      - opened
-      - synchronize
-      - reopened
-    paths-ignore:
-      - 'docs/**'
+  workflow_call:
+    inputs:
+      PR-number:
+        description: "Pull request number."
+        required: true
+        type: string
+      context-ref:
+        description: "Context in which the workflow runs. If the pull request is from a fork, this is the pull request target branch. Otherwise, this is the pull request branch so committers can test workflow changes directly."
+        required: true
+        type: string
+      SHA:
+        description: "SHA under test (head of the pull request branch)."
+        required: true
+        type: string
+      base-SHA:
+        description: "SHA of the base branch (target branch of the pull request)."
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      PR-number:
+        description: "Pull request number."
+        required: true
+        type: string
+      context-ref:
+        description: "Context in which the workflow runs. If the pull request is from a fork, this is the pull request target branch. Otherwise, this is the pull request branch so committers can test workflow changes directly."
+        required: true
+        type: string
+      SHA:
+        description: "SHA under test (head of the pull request branch)."
+        required: true
+        type: string
+      base-SHA:
+        description: "SHA of the base branch (target branch of the pull request)."
+        required: true
+        type: string
   push:
     branches:
       - main
     paths-ignore:
       - 'docs/**'
+
+permissions:
+  contents: read
+
 jobs:
+  commit-status-start:
+    name: Commit Status Start
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Set initial commit status
+        uses: cilium/tetragon/.github/actions/set-commit-status@main
+        with:
+          sha: ${{ inputs.SHA || github.sha }}
+          context: Integration Test
+
   build:
+    needs: commit-status-start
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
     - name: Checkout code
       uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      with:
+        ref: ${{ inputs.SHA || github.sha }}
+        persist-credentials: false
 
     - name: Set Up Job Variables
       id: vars
+      env:
+        SHA: ${{ inputs.SHA || github.sha }}
       run: |
-        if [ ${{ github.event.issue.pull_request || github.event.pull_request }} ]; then
-          PR_API_JSON=$(curl \
-            -H "Accept: application/vnd.github.v3+json" \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            ${{ github.event.issue.pull_request.url || github.event.pull_request.url }})
-          SHA=$(echo "$PR_API_JSON" | jq -r ".head.sha")
-        else
-          SHA=${{ github.sha }}
-        fi
-        echo "sha=${SHA}" >> $GITHUB_OUTPUT
         echo "operatorImage=quay.io/cilium/tetragon-operator-ci:${SHA}" >> $GITHUB_OUTPUT
 
     - name: Install Go
@@ -63,3 +105,19 @@ jobs:
           --set tetragonOperator.image.override=${{ steps.vars.outputs.operatorImage }}
         kubectl rollout status -n kube-system deployment/tetragon-operator
         go test --tags=integration -v ./operator/... ./pkg/manager/... ./pkg/sensors/exec/procevents/... ./pkg/watcher/crdwatcher/...
+
+  merge-upload-and-status:
+    name: Merge Upload and Status
+    if: ${{ always() }}
+    needs:
+      - build
+    permissions:
+      actions: read
+      contents: read
+      statuses: write
+    uses: ./.github/workflows/common-post-jobs.yml
+    with:
+      context-ref: ${{ inputs.context-ref || github.sha }}
+      sha: ${{ inputs.SHA || github.sha }}
+      success: ${{ needs.build.result == 'success' }}
+      status-context: Integration Test

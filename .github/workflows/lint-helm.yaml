@@ -9,15 +9,23 @@ on:
     - 'pkg/k8s/apis/cilium.io/client/crds/v1alpha1/*.yaml'
     - 'docs/content/en/docs/reference/helm-chart.md'
     - '.github/workflows/lint-helm.yaml'
-  pull_request:
-    paths:
-    - 'install/kubernetes/**'
-    - 'pkg/k8s/apis/cilium.io/client/crds/v1alpha1/*.yaml'
-    - 'docs/content/en/docs/reference/helm-chart.md'
-    - '.github/workflows/lint-helm.yaml'
+  workflow_dispatch:
+    inputs:
+      PR-number:
+        description: "Pull request number."
+        required: true
+      context-ref:
+        description: "Context in which the workflow runs. If the pull request is from a fork, this is the pull request target branch. Otherwise, this is the pull request branch so committers can test workflow changes directly."
+        required: true
+      SHA:
+        description: "SHA under test (head of the pull request branch)."
+        required: true
+      base-SHA:
+        description: "SHA of the base branch (target branch of the pull request)."
+        required: false
 
 permissions:
-  pull-requests: write
+  contents: read
 
 env:
   MIN_K8S_VERSION: "1.30.0"
@@ -25,12 +33,26 @@ env:
   PYTHON_VERSION: "3.12"
 
 jobs:
+  commit-status-start:
+    name: Commit Status Start
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Set initial commit status
+        uses: cilium/tetragon/.github/actions/set-commit-status@main
+        with:
+          sha: ${{ inputs.SHA || github.sha }}
+
   build-and-lint-helm:
+    needs: commit-status-start
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ inputs.SHA || github.sha }}
           fetch-depth: 0
 
       # Build Tetragon Helm chart
@@ -80,29 +102,15 @@ jobs:
           run: |
             make -C install/kubernetes kubeconform
 
-      # Post Kubeconform issues as comment on the GH PR, if there are any
-      - name: Comment Kubeconform Output
-        if: failure() && (steps.kubeconform_min_k8s_version.outcome == 'failure' || steps.kubeconform_latest_k8s_version.outcome == 'failure')
-        uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3.0.4
-        with:
-          hide_and_recreate: true
-          skip_unchanged: true
-          message: |
-            ## Kubeconform with minimum supported K8s version ${{ env.MIN_K8S_VERSION }}
-            STDOUT:
-            ```
-            ${{ steps.kubeconform_min_k8s_version.outputs.stdout }}
-            ```
-            STDERR:
-            ```
-            ${{ steps.kubeconform_min_k8s_version.outputs.stderr }}
-            ```
-            ## Kubeconform with latest K8s version
-            STDOUT:
-            ```
-            ${{ steps.kubeconform_latest_k8s_version.outputs.stdout }}
-            ```
-            STDERR:
-            ```
-            ${{ steps.kubeconform_latest_k8s_version.outputs.stderr }}
-            ```
+  merge-upload-and-status:
+    if: ${{ always() }}
+    name: Merge Upload and Status
+    needs: build-and-lint-helm
+    permissions:
+      contents: read
+      statuses: write
+    uses: ./.github/workflows/common-post-jobs.yml
+    with:
+      context-ref: ${{ inputs.context-ref || github.sha }}
+      sha: ${{ inputs.SHA || github.sha }}
+      success: ${{ needs.build-and-lint-helm.result == 'success' }}

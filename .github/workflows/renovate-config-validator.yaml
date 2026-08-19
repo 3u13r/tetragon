@@ -1,16 +1,45 @@
 name: Validate renovate configuration
 
 on:
-  pull_request:
-    paths:
-      - '.github/renovate.json5'
+  workflow_dispatch:
+    inputs:
+      PR-number:
+        description: "Pull request number."
+        required: true
+      context-ref:
+        description: "Trusted ref used to load the workflow."
+        required: true
+      SHA:
+        description: "SHA under test (head of the PR branch)."
+        required: true
+      base-SHA:
+        description: "SHA of the base branch (target branch of the PR)."
+        required: false
+
+permissions:
+  contents: read
 
 jobs:
+  commit-status-start:
+    name: Commit Status Start
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Set initial commit status
+        uses: cilium/tetragon/.github/actions/set-commit-status@main
+        with:
+          sha: ${{ inputs.SHA || github.sha }}
+
   validate:
+    needs: commit-status-start
     runs-on: ubuntu-latest
     steps:
       - name: Checkout configuration
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.SHA || github.sha }}
 
       # this step uses latest renovate slim release
       - name: Validate configuration
@@ -18,4 +47,17 @@ jobs:
           docker run --rm --entrypoint "renovate-config-validator"
           -v "${{ github.workspace }}/.github/renovate.json5":"/renovate.json5"
           ghcr.io/renovatebot/renovate:latest "/renovate.json5"
+
+  merge-upload-and-status:
+    if: ${{ always() }}
+    name: Merge Upload and Status
+    needs: validate
+    permissions:
+      contents: read
+      statuses: write
+    uses: ./.github/workflows/common-post-jobs.yml
+    with:
+      context-ref: ${{ inputs.context-ref || github.sha }}
+      sha: ${{ inputs.SHA || github.sha }}
+      success: ${{ needs.validate.result == 'success' }}
 

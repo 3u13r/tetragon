@@ -1,13 +1,38 @@
 name: Image CI Build
 
 on:
-  pull_request_target:
-    types:
-      - opened
-      - synchronize
-      - reopened
-    paths-ignore:
-      - 'docs/**'
+  workflow_call:
+    inputs:
+      PR-number:
+        description: "Pull request number."
+        required: true
+        type: string
+      context-ref:
+        description: "Context in which the workflow runs. If the pull request is from a fork, this is the pull request target branch. Otherwise, this is the pull request branch so committers can test workflow changes directly."
+        required: true
+        type: string
+      SHA:
+        description: "SHA under test (head of the pull request branch)."
+        required: true
+        type: string
+      base-SHA:
+        description: "SHA of the base branch (target branch of the pull request)."
+        required: false
+        type: string
+  workflow_dispatch:
+    inputs:
+      PR-number:
+        description: "Pull request number."
+        required: true
+      context-ref:
+        description: "Context in which the workflow runs. If the pull request is from a fork, this is the pull request target branch. Otherwise, this is the pull request branch so committers can test workflow changes directly."
+        required: true
+      SHA:
+        description: "SHA under test (head of the pull request branch)."
+        required: true
+      base-SHA:
+        description: "SHA of the base branch (target branch of the pull request)."
+        required: false
   push:
     branches:
       - main
@@ -22,7 +47,30 @@ permissions:
   contents: read
 
 jobs:
+  echo-inputs:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    name: Echo Workflow Dispatch Inputs
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Echo Workflow Dispatch Inputs
+        run: |
+          echo '${{ tojson(inputs) }}'
+
+  commit-status-start:
+    name: Commit Status Start
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Set initial commit status
+        uses: cilium/tetragon/.github/actions/set-commit-status@main
+        with:
+          sha: ${{ inputs.SHA || github.sha }}
+          context: Image CI Build
+
   build-and-push:
+    needs: commit-status-start
     runs-on: ubuntu-24.04
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
@@ -51,7 +99,7 @@ jobs:
       - name: Getting image tag
         id: tag
         env:
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_SHA: ${{ inputs.SHA }}
           SHA: ${{ github.sha }}
           EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref_name }}
@@ -131,7 +179,7 @@ jobs:
 
       # PR updates
       - name: CI Build (PR)
-        if: github.event_name == 'pull_request_target' || github.event_name == 'pull_request'
+        if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' }}
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         id: docker_build_ci_pr
         with:
@@ -146,7 +194,7 @@ jobs:
             ${{ env.IMAGE }}:${{ steps.tag.outputs.tag }}
 
       - name: CI Image Releases digests (PR)
-        if: github.event_name == 'pull_request_target' || github.event_name == 'pull_request'
+        if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' }}
         run: |
           echo "| Info | Value |" >> $GITHUB_STEP_SUMMARY
           echo "| --- | --- |" >> $GITHUB_STEP_SUMMARY
@@ -194,3 +242,22 @@ jobs:
           echo "Example commands:"
           echo helm template -n tetragon oci://quay.io/cilium-charts-dev/tetragon --version ${{ needs.build-and-push.outputs.chart-version }}
           echo helm upgrade --install tetragon -n tetragon oci://quay.io/cilium-charts-dev/tetragon --version ${{ needs.build-and-push.outputs.chart-version }}
+
+
+  merge-upload-and-status:
+    name: Merge Upload and Status
+    if: ${{ always() }}
+    needs:
+      - build-and-push
+      - helm-chart
+    permissions:
+      actions: read
+      contents: read
+      statuses: write
+    uses: ./.github/workflows/common-post-jobs.yml
+    secrets: inherit
+    with:
+      context-ref: ${{ inputs.context-ref || github.sha }}
+      sha: ${{ inputs.SHA || github.sha }}
+      success: ${{ needs.build-and-push.result == 'success' && needs.helm-chart.result == 'success' }}
+      status-context: Image CI Build

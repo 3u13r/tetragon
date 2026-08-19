@@ -7,23 +7,53 @@ on:
     paths:
       - 'docs/**'
       - '.github/workflows/build-deploy-docs.yaml'
-  pull_request:
-    paths:
-      - 'docs/**'
-      - '.github/workflows/build-deploy-docs.yaml'
-    branches: 
-      - 'main'
-
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
+    inputs:
+      PR-number:
+        required: false
+        type: string
+        description: "Pull request number."
+      context-ref:
+        required: false
+        type: string
+        description: "Context in which the workflow runs. If the pull request is from a fork, this is the pull request target branch. Otherwise, this is the pull request branch so committers can test workflow changes directly."
+      SHA:
+        required: false
+        type: string
+        description: "SHA under test (head of the pull request branch)."
+      base-SHA:
+        required: false
+        type: string
+        description: "SHA of the base branch (target branch of the pull request)."
+
+permissions:
+  contents: read
 
 jobs:
+  commit-status-start:
+    name: Commit Status Start
+    if: ${{ inputs.PR-number }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Set initial commit status
+        uses: cilium/tetragon/.github/actions/set-commit-status@main
+        with:
+          sha: ${{ inputs.SHA || github.sha }}
+
   build:
+    needs: commit-status-start
+    if: ${{ always() && (needs.commit-status-start.result == 'success' || needs.commit-status-start.result == 'skipped') }}
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ inputs.SHA || github.sha }}
+          persist-credentials: false
           fetch-depth: 0         # Fetch all history for .GitInfo and .Lastmod
 
       - name: Setup Pages
@@ -56,13 +86,13 @@ jobs:
         run: hugo --minify --baseURL "${{ steps.pages.outputs.base_url }}/"
 
       - name: Upload artifact
-        if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+        if: github.event_name == 'push' || !inputs.PR-number
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: docs/public
 
   deploy:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    if: github.event_name == 'push' || !inputs.PR-number
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -81,4 +111,17 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
+
+  merge-upload-and-status:
+    if: ${{ always() && inputs.PR-number }}
+    name: Merge Upload and Status
+    needs: build
+    permissions:
+      contents: read
+      statuses: write
+    uses: ./.github/workflows/common-post-jobs.yml
+    with:
+      context-ref: ${{ inputs.context-ref || github.sha }}
+      sha: ${{ inputs.SHA || github.sha }}
+      success: ${{ needs.build.result == 'success' }}
 

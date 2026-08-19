@@ -10,23 +10,47 @@ on:
     paths-ignore:
       - 'docs/**'
       - '**.md'
-  pull_request:
-    # Until https://github.com/orgs/community/discussions/44490
-    # is not resolved, run on all paths, even "**.md".
+  workflow_dispatch:
+    inputs:
+      PR-number:
+        description: "Pull request number."
+        required: true
+      context-ref:
+        description: "Context in which the workflow runs. If the pull request is from a fork, this is the pull request target branch. Otherwise, this is the pull request branch so committers can test workflow changes directly."
+        required: true
+      SHA:
+        description: "SHA under test (head of the pull request branch)."
+        required: true
+      base-SHA:
+        description: "SHA of the base branch (target branch of the pull request)."
+        required: true
 
 permissions:
   # For golangci/golangci-lint to have read access to pull request for `only-new-issues` option.
   contents: read
 
 jobs:
+  commit-status-start:
+    name: Commit Status Start
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Set initial commit status
+        uses: cilium/tetragon/.github/actions/set-commit-status@main
+        with:
+          sha: ${{ inputs.SHA || github.sha }}
+
   build-every-commit:
+    needs: commit-status-start
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'pull_request' }}
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     steps:
     - name: Checkout code
       uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       with:
-        ref: ${{ github.event.pull_request.head.sha }}
+        ref: ${{ inputs.SHA || github.sha }}
         fetch-depth: 0
 
     - name: Install Go
@@ -38,7 +62,7 @@ jobs:
     - name: Check if build works for every commit
       run: |
         set -x
-        PR_FIRST_COMMIT=$(git rev-list --reverse origin/${{ github.event.pull_request.base.ref }}..HEAD | head -1)
+        PR_FIRST_COMMIT=$(git rev-list --reverse ${{ inputs.base-SHA }}..HEAD | head -1)
         git rebase --exec "make -j$(nproc) tetragon tetra tetragon-bpf tetragon-operator" $PR_FIRST_COMMIT^
 
     - name: Failed commit during the build
@@ -46,19 +70,23 @@ jobs:
       run: git --no-pager log --format=%B -n 1
 
   ensure-no-binary-checkin:
+    needs: commit-status-start
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      
+        with:
+          ref: ${{ inputs.SHA || github.sha }}
+
       - name: Ensure No Binary Files Checked In
         run: |
-          echo "Checking for any checked in binary files not in allowlist..." 
+          echo "Checking for any checked in binary files not in allowlist..."
           outfile="$(mktemp)"
           find . -type f -size +0 -not -wholename '**/vendor/**' -not -wholename '**/_vendor/**' -not -wholename '**/.git/**' -not -name '*.png' -not -name '*.jpg' -not -name '*.ico' | xargs -n 100 grep -IL '' | tee "$outfile"
           test -z "$(cat $outfile)"
 
   golangci-lint:
+    needs: commit-status-start
     strategy:
       matrix:
         os: [linux, windows]
@@ -67,6 +95,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.SHA || github.sha }}
 
       - name: Install Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -86,10 +116,13 @@ jobs:
           args: --config=.golangci.yml --verbose
 
   format:
-    runs-on: ubuntu-latest 
+    needs: commit-status-start
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.SHA || github.sha }}
 
       - name: Install Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -115,10 +148,13 @@ jobs:
           fi
 
   vendoring:
-    runs-on: ubuntu-latest 
+    needs: commit-status-start
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.SHA || github.sha }}
 
       - name: Install Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -133,19 +169,25 @@ jobs:
           test -z "$(git status --porcelain)" || (echo "Module vendoring checks failed. Please run 'make vendor', and submit your changes"; exit 1)
 
   build-cli:
+    needs: commit-status-start
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.SHA || github.sha }}
 
       - name: Build CLI release binaries
         run: make cli-release
 
   build-windows:
+    needs: commit-status-start
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.SHA || github.sha }}
 
       - name: Build tetragon Windows binaries
         run: |
@@ -153,10 +195,13 @@ jobs:
           GOOS=windows GOARCH=arm64 make tetragon
 
   build-nok8s:
+    needs: commit-status-start
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.SHA || github.sha }}
 
       - name: Build tetragon Windows binaries
         run: |
@@ -164,10 +209,35 @@ jobs:
           GOARCH=arm64 make tetragon-nok8s tetra-nok8s
 
   errmetrics-fileids-check:
+    needs: commit-status-start
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.SHA || github.sha }}
 
       - name: Check errmetrics file IDs are in sync
         run: ./contrib/fileids-check.sh
+
+  merge-upload-and-status:
+    if: ${{ always() }}
+    name: Merge Upload and Status
+    needs:
+      - build-every-commit
+      - ensure-no-binary-checkin
+      - golangci-lint
+      - format
+      - vendoring
+      - build-cli
+      - build-windows
+      - build-nok8s
+      - errmetrics-fileids-check
+    permissions:
+      contents: read
+      statuses: write
+    uses: ./.github/workflows/common-post-jobs.yml
+    with:
+      context-ref: ${{ inputs.context-ref || github.sha }}
+      sha: ${{ inputs.SHA || github.sha }}
+      success: ${{ (needs.build-every-commit.result == 'success' || needs.build-every-commit.result == 'skipped') && needs.ensure-no-binary-checkin.result == 'success' && needs.golangci-lint.result == 'success' && needs.format.result == 'success' && needs.vendoring.result == 'success' && needs.build-cli.result == 'success' && needs.build-windows.result == 'success' && needs.build-nok8s.result == 'success' && needs.errmetrics-fileids-check.result == 'success' }}

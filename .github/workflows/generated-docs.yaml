@@ -16,28 +16,46 @@ on:
       - docs/data/tetragon_flags.yaml
       - docs/content/en/docs/reference/templates/tracing_policy.tmpl
       - .github/workflows/generated-docs.yaml
-  pull_request:
-    paths:
-      - "**"
-      - "!docs/**"
-      - "!examples/**"
-      - "!install/**"
-      - "!tests/**"
-      - "!**.md"
-      - "!**.yaml"
-      - docs/content/en/docs/reference/metrics.md
-      - docs/data/tetragon_flags.yaml
-      - docs/content/en/docs/reference/templates/tracing_policy.tmpl
-      - .github/workflows/generated-docs.yaml
+  workflow_dispatch:
+    inputs:
+      PR-number:
+        description: "Pull request number."
+        required: true
+      context-ref:
+        description: "Context in which the workflow runs. If the pull request is from a fork, this is the pull request target branch. Otherwise, this is the pull request branch so committers can test workflow changes directly."
+        required: true
+      SHA:
+        description: "SHA under test (head of the pull request branch)."
+        required: true
+      base-SHA:
+        description: "SHA of the base branch (target branch of the pull request)."
+        required: false
+
+permissions:
+  contents: read
 
 jobs:
+  commit-status-start:
+    name: Commit Status Start
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Set initial commit status
+        uses: cilium/tetragon/.github/actions/set-commit-status@main
+        with:
+          sha: ${{ inputs.SHA || github.sha }}
+
   check-generated-docs:
+    needs: commit-status-start
     strategy:
       fail-fast: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ inputs.SHA || github.sha }}
           fetch-depth: 0
       - name: Install Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -79,3 +97,16 @@ jobs:
             echo "Generated tracing policy reference is outdated."
             echo "Please run 'make tracing-policy-docs' and submit your changes."; exit 1
           fi
+
+  merge-upload-and-status:
+    if: ${{ always() }}
+    name: Merge Upload and Status
+    needs: check-generated-docs
+    permissions:
+      contents: read
+      statuses: write
+    uses: ./.github/workflows/common-post-jobs.yml
+    with:
+      context-ref: ${{ inputs.context-ref || github.sha }}
+      sha: ${{ inputs.SHA || github.sha }}
+      success: ${{ needs.check-generated-docs.result == 'success' }}

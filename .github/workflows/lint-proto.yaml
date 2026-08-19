@@ -8,18 +8,44 @@ on:
       - api/**
       - docs/content/en/docs/reference/grpc-api.md
       - .github/workflows/lint-proto.yaml
-  pull_request:
-    paths:
-      - api/**
-      - docs/content/en/docs/reference/grpc-api.md
-      - .github/workflows/lint-proto.yaml
+  workflow_dispatch:
+    inputs:
+      PR-number:
+        description: "Pull request number."
+        required: true
+      context-ref:
+        description: "Context in which the workflow runs. If the pull request is from a fork, this is the pull request target branch. Otherwise, this is the pull request branch so committers can test workflow changes directly."
+        required: true
+      SHA:
+        description: "SHA under test (head of the pull request branch)."
+        required: true
+      base-SHA:
+        description: "SHA of the base branch (target branch of the pull request)."
+        required: true
+
+permissions:
+  contents: read
 
 jobs:
+  commit-status-start:
+    name: Commit Status Start
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Set initial commit status
+        uses: cilium/tetragon/.github/actions/set-commit-status@main
+        with:
+          sha: ${{ inputs.SHA || github.sha }}
+
   lint-proto:
+    needs: commit-status-start
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ inputs.SHA || github.sha }}
           fetch-depth: 0
       - name: Lint protobuf
         run: |
@@ -29,14 +55,16 @@ jobs:
           if ${{ github.event_name == 'push' }}; then
             make -C api check-breaking EXTRA_BUF_FLAGS="--error-format=github-actions" BUF_BREAKING_AGAINST_BRANCH="origin/${{ github.ref_name }}"
           else
-            make -C api check-breaking EXTRA_BUF_FLAGS="--error-format=github-actions" BUF_BREAKING_AGAINST_BRANCH="origin/${{ github.base_ref }}"
+            make -C api check-breaking EXTRA_BUF_FLAGS="--error-format=github-actions" BUF_BREAKING_AGAINST_BRANCH="${{ inputs.base-SHA }}"
           fi
           make -C api format EXTRA_BUF_FLAGS="--exit-code --error-format=github-actions"
   check-proto-generated:
+    needs: commit-status-start
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ inputs.SHA || github.sha }}
           fetch-depth: 0
       - name: Install Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -58,3 +86,18 @@ jobs:
             echo "Protobuf API generated files are outdated."
             echo "Please run 'make protogen' and submit your changes."; exit 1
           fi
+
+  merge-upload-and-status:
+    if: ${{ always() }}
+    name: Merge Upload and Status
+    needs:
+      - lint-proto
+      - check-proto-generated
+    permissions:
+      contents: read
+      statuses: write
+    uses: ./.github/workflows/common-post-jobs.yml
+    with:
+      context-ref: ${{ inputs.context-ref || github.sha }}
+      sha: ${{ inputs.SHA || github.sha }}
+      success: ${{ needs.lint-proto.result == 'success' && needs.check-proto-generated.result == 'success' }}

@@ -1,36 +1,76 @@
 name: pr
 
 on:
-  pull_request:
-    branches:
-      - main
-      - v*
-    types:
-      - opened
-      - reopened
-      - synchronize
-      - edited
-      - ready_for_review
-      - labeled
-      - unlabeled
+  workflow_dispatch:
+    inputs:
+      PR-number:
+        description: "Pull request number."
+        required: true
+      context-ref:
+        description: "Context in which the workflow runs. If the pull request is from a fork, this is the pull request target branch. Otherwise, this is the pull request branch so committers can test workflow changes directly."
+        required: true
+      SHA:
+        description: "SHA under test (head of the pull request branch)."
+        required: true
+      base-SHA:
+        description: "SHA of the base branch (target branch of the pull request)."
+        required: false
 
-env:
-  LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
+permissions:
+  contents: read
 
 jobs:
+  commit-status-start:
+    name: Commit Status Start
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Set initial commit status
+        uses: cilium/tetragon/.github/actions/set-commit-status@main
+        with:
+          sha: ${{ inputs.SHA }}
+
   # based on https://github.com/WordPress/performance/blob/trunk/.github/workflows/pr-validation.yml
   labels:
+    needs: commit-status-start
     name: validate labels
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
+      - name: Get pull request labels
+        id: pull-request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.PR-number }}
+        run: |
+          labels=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}" --jq '.labels | map(.name) | join(" ")')
+          echo "labels=${labels}" >> "$GITHUB_OUTPUT"
+
       - name: release-note/*
-        if: always() && !contains(env.LABELS, 'release-note/')
+        if: always() && !contains(steps.pull-request.outputs.labels, 'release-note/')
         run: |
           echo "please add a release-note/* label to the pull request"
           exit 1
       - name: dont-merge/*
-        if: always() && contains(env.LABELS, 'dont-merge/')
+        if: always() && contains(steps.pull-request.outputs.labels, 'dont-merge/')
         run: |
           echo "pull request has a dont-merge label"
           exit 1
+
+  merge-upload-and-status:
+    if: ${{ always() }}
+    name: Merge Upload and Status
+    needs: labels
+    permissions:
+      contents: read
+      statuses: write
+    uses: ./.github/workflows/common-post-jobs.yml
+    with:
+      context-ref: ${{ inputs.context-ref }}
+      sha: ${{ inputs.SHA }}
+      success: ${{ needs.labels.result == 'success' }}

@@ -1,26 +1,54 @@
 name: vmtests
 on:
-  pull_request:
-    paths-ignore:
-      - 'docs/**'
+  workflow_dispatch:
+    inputs:
+      PR-number:
+        description: "Pull request number."
+        required: true
+      context-ref:
+        description: "Context in which the workflow runs. If the pull request is from a fork, this is the pull request target branch. Otherwise, this is the pull request branch so committers can test workflow changes directly."
+        required: true
+      SHA:
+        description: "SHA under test (head of the pull request branch)."
+        required: true
+      base-SHA:
+        description: "SHA of the base branch (target branch of the pull request)."
+        required: false
   push:
     branches:
       - main
     paths-ignore:
       - 'docs/**'
 
+permissions:
+  contents: read
+
 jobs:
+  commit-status-start:
+    name: Commit Status Start
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Set initial commit status
+        uses: cilium/tetragon/.github/actions/set-commit-status@main
+        with:
+          sha: ${{ inputs.SHA || github.sha }}
+
   build:
+    needs: commit-status-start
     name: Build tetragon
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
-      group: ${{ github.ref }}-vmtest-build
+      group: ${{ inputs.PR-number || github.ref }}-vmtest-build
       cancel-in-progress: true
     steps:
     - name: Checkout code
       uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       with:
+        ref: ${{ inputs.SHA || github.sha }}
         path: go/src/github.com/cilium/tetragon/
 
     - name: Install Go
@@ -89,7 +117,7 @@ jobs:
            group:
               - 0
     concurrency:
-      group: ${{ github.ref }}-vmtest-${{ matrix.kernel }}-${{ matrix.group }}
+      group: ${{ inputs.PR-number || github.ref }}-vmtest-${{ matrix.kernel }}-${{ matrix.group }}
       cancel-in-progress: true
     needs: build
     name: Test kernel ${{ matrix.kernel }} / test group ${{ matrix.group }}
@@ -184,3 +212,19 @@ jobs:
       - uses: geekyeggo/delete-artifact@176a747ab7e287e3ff4787bf8a148716375ca118 # v6.0.0
         with:
           name: tetragon-build
+
+  merge-upload-and-status:
+    name: Merge Upload and Status
+    if: ${{ always() }}
+    needs:
+      - build
+      - test
+      - post-test
+    permissions:
+      contents: read
+      statuses: write
+    uses: ./.github/workflows/common-post-jobs.yml
+    with:
+      context-ref: ${{ inputs.context-ref || github.sha }}
+      sha: ${{ inputs.SHA || github.sha }}
+      success: ${{ needs.build.result == 'success' && needs.test.result == 'success' && needs.post-test.result == 'success' }}

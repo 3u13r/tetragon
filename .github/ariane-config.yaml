@@ -1,0 +1,120 @@
+# TODO(@3u13r): Set the correct list of allowed-teams that exists in the cilium org.
+allowed-teams:
+  - organization-members
+
+triggers:
+  /test\s*:
+    workflows:
+      - bpf-unit-tests.yml
+      - build-clang-image.yaml
+      - build-deploy-docs.yaml
+      - build-images-ci.yml
+      - check-links-pr.yaml
+      - checkpatch.yaml
+      - digestcheck.yaml
+      - generated-docs.yaml
+      - gotests.yml
+      - integration-test.yaml
+      - lint-codeql.yml
+      - lint-helm.yaml
+      - lint-k8s.yaml
+      - lint-proto.yaml
+      - tarball-tests.yaml
+      - pr-validation.yaml
+      - renovate-config-validator.yaml
+      - run-e2e-tests.yaml
+      - static-checks.yaml
+      - tetragon-rthook-pr.yaml
+      - veristat-compare.yaml
+      - veristat.yaml
+      - vmtests.yml
+      - windows-build-smoke-test.yml
+  /test-bpf\s*:
+    workflows:
+      - bpf-unit-tests.yml
+      - veristat-compare.yaml
+      - veristat.yaml
+  /test-build\s*:
+    workflows:
+      - build-clang-image.yaml
+      - build-images-ci.yml
+      - tarball-tests.yaml
+      - windows-build-smoke-test.yml
+  /test-docs\s*:
+    workflows:
+      - build-deploy-docs.yaml
+      - check-links-pr.yaml
+      - generated-docs.yaml
+  /test-go\s*:
+    workflows:
+      - gotests.yml
+  /test-lint\s*:
+    workflows:
+      - checkpatch.yaml
+      - digestcheck.yaml
+      - lint-codeql.yml
+      - lint-helm.yaml
+      - lint-k8s.yaml
+      - lint-proto.yaml
+      - pr-validation.yaml
+      - renovate-config-validator.yaml
+      - static-checks.yaml
+  /test-pr-validation\s*:
+    workflows:
+      - pr-validation.yaml
+  /test-packages\s*:
+    workflows:
+      - tarball-tests.yaml
+  /test-vm\s*:
+    workflows:
+      - vmtests.yml
+  /test-windows\s*:
+    workflows:
+      - windows-build-smoke-test.yml
+
+workflows:
+  bpf-unit-tests.yml:
+    paths-regex: (bpf/|\.github/workflows/bpf-unit-tests\.yml$)
+  build-clang-image.yaml:
+    paths-regex: (Dockerfile\.clang$|\.github/workflows/build-clang-image\.yaml$)
+  build-deploy-docs.yaml:
+    paths-regex: (docs/|\.github/workflows/build-deploy-docs\.yaml$)
+  build-images-ci.yml:
+    paths-ignore-regex: ^docs/
+  check-links-pr.yaml:
+    paths-regex: (README\.md$|docs/content/.*\.md$|\.github/lychee\.toml$|\.github/workflows/check-links-pr\.yaml$)
+  digestcheck.yaml:
+    paths-regex: ([dD]ockerfile|contrib/digestcheck\.sh$|\.github/workflows/digestcheck\.yaml$)
+  gotests.yml:
+    paths-ignore-regex: ^docs/
+  generated-docs.yaml:
+    paths-regex: (^(api|bpf|cmd|contrib|go-tests|operator|pkg|tetra|tetragon|tetragon-bench|tetragon-metrics-docs|tools|vendor)/|^[^/]+\.(c|go|h|mod|sh|sum)$|^(Dockerfile|Makefile)(\..*)?$|^docs/content/en/docs/reference/metrics\.md$|^docs/data/tetragon_flags\.yaml$|^docs/content/en/docs/reference/templates/tracing_policy\.tmpl$|^\.github/workflows/generated-docs\.yaml$)
+  integration-test.yaml:
+    paths-ignore-regex: ^docs/
+  lint-codeql.yml:
+    paths-ignore-regex: ^docs/
+  lint-helm.yaml:
+    paths-regex: (install/kubernetes/|pkg/k8s/apis/cilium\.io/client/crds/v1alpha1/.*\.yaml$|docs/content/en/docs/reference/helm-chart\.md$|\.github/workflows/lint-helm\.yaml$)
+  lint-k8s.yaml:
+    paths-regex: (pkg/k8s/|\.github/workflows/lint-k8s\.yaml$)
+  lint-proto.yaml:
+    paths-regex: (api/|docs/content/en/docs/reference/grpc-api\.md$|\.github/workflows/lint-proto\.yaml$)
+  tarball-tests.yaml:
+    paths-ignore-regex: (^docs/|.*\.md$)
+  renovate-config-validator.yaml:
+    paths-regex: ^\.github/renovate\.json5$
+  run-e2e-tests.yaml:
+    paths-ignore-regex: ^docs/
+  tetragon-rthook-pr.yaml:
+    paths-ignore-regex: ^docs/
+  veristat-compare.yaml:
+    paths-regex: ^bpf/
+  veristat.yaml:
+    paths-regex: ^bpf/
+  vmtests.yml:
+    paths-ignore-regex: ^docs/
+  windows-build-smoke-test.yml:
+    paths-ignore-regex: .*\.md$
+
+feedback:
+  verbose: true
