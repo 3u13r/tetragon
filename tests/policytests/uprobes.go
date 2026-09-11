@@ -6,6 +6,7 @@
 package tests
 
 import (
+	"fmt"
 	"runtime"
 	"strconv"
 
@@ -21,6 +22,20 @@ func uprobeSetArgIndex() int {
 		return 7
 	}
 	return 5
+}
+
+func uprobeCELRegisterOverride() (string, string) {
+	if runtime.GOARCH == "arm64" {
+		return "test_2+12", "x0"
+	}
+	return "test_2+14", "rax"
+}
+
+func uprobeCELArgumentRegister() string {
+	if runtime.GOARCH == "arm64" {
+		return "x0"
+	}
+	return "rdi"
 }
 
 // uprobe-pclntab: attach to stripped Go binary via pclntab symbol resolution
@@ -113,6 +128,119 @@ spec:
 		ActCountChecker: policytest.ActionCounts{
 			Post:     &postCnt,
 			Override: &overrideCount,
+		},
+	}
+}).RegisterAtInit()
+
+var uprobeCELArgRegister = uprobeCELArgumentRegister()
+
+var _ = policytest.NewBuilder("uprobe-override-cel-arg").WithLabels("uprobes", "cel").WithPolicyTemplate(fmt.Sprintf(`
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: "uprobe-override-cel-arg"
+spec:
+  uprobes:
+  - path: {{ testBinary "uprobe-simple" }}
+    symbols:
+    - "manyargs"
+    args:
+    - index: 1
+      type: "int"
+    selectors:
+%[1]s- matchActions: [{action: Override, argRegs: ["%[2]s=cel(arg0 + int32(41))"]}]
+`, "    ", uprobeCELArgRegister)).WithSkip(func(si *policytest.SkipInfo) string {
+	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
+		return "uprobe register overrides are only supported on amd64 and arm64"
+	}
+	if !si.AgentInfo.Probes[bpf.LargeProgsProbe] {
+		return "need 5.3 or newer kernel"
+	}
+	if !si.AgentInfo.Probes[bpf.MixBPFAndTailCallsProbe] {
+		return "need kernel where we can mix bpf and tail calls"
+	}
+	if !si.AgentInfo.Probes[bpf.UprobeRegsChangeProbe] {
+		return "uprobes cannot change registers"
+	}
+	return ""
+}).AddScenario(func(c *policytest.Conf) *policytest.Scenario {
+	bin := c.TestBinary("uprobe-simple")
+	exitCode := 42
+	if c.TestConf != nil && c.TestConf.MonitorMode {
+		exitCode = 0
+	}
+
+	upChecker := ec.NewProcessUprobeChecker("uprobe-override-cel-arg").
+		WithProcess(ec.NewProcessChecker().
+			WithBinary(sm.Full(bin))).
+		WithSymbol(sm.Full("manyargs")).
+		WithArgs(ec.NewKprobeArgumentListMatcher().
+			WithOperator(lc.Ordered).
+			WithValues(ec.NewKprobeArgumentChecker().WithIntArg(1)))
+	overrideCnt := uint64(1)
+	postCnt := uint64(1)
+	return &policytest.Scenario{
+		Name:         "override a register using a captured function argument",
+		Trigger:      policytest.NewCmdTrigger(bin, "0").ExpectExitCode(exitCode),
+		EventChecker: ec.NewUnorderedEventChecker(upChecker),
+		ActCountChecker: policytest.ActionCounts{
+			Post:     &postCnt,
+			Override: &overrideCnt,
+		},
+	}
+}).RegisterAtInit()
+
+var uprobeCELSymbol, uprobeCELRegister = uprobeCELRegisterOverride()
+
+var _ = policytest.NewBuilder("uprobe-override-cel-register").WithLabels("uprobes", "cel").WithPolicyTemplate(`
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: "uprobe-override-cel-register"
+spec:
+  uprobes:
+  - path: {{ testBinary "regs-override" }}
+    symbols:
+    - "` + uprobeCELSymbol + `"
+    selectors:
+    - matchActions:
+      - action: Override
+        argRegs:
+        - "` + uprobeCELRegister + `=cel(` + uprobeCELRegister + ` + 5)"
+`).WithSkip(func(si *policytest.SkipInfo) string {
+	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
+		return "raw register CEL expressions are only supported on amd64 and arm64"
+	}
+	if !si.AgentInfo.Probes[bpf.LargeProgsProbe] {
+		return "need 5.3 or newer kernel"
+	}
+	if !si.AgentInfo.Probes[bpf.MixBPFAndTailCallsProbe] {
+		return "need kernel where we can mix bpf and tail calls"
+	}
+	if !si.AgentInfo.Probes[bpf.UprobeRegsChangeProbe] {
+		return "uprobes cannot change registers"
+	}
+	return ""
+}).AddScenario(func(c *policytest.Conf) *policytest.Scenario {
+	bin := c.TestBinary("regs-override")
+	expectedValue := "0xdeadbeefdeadbef4"
+	if c.TestConf != nil && c.TestConf.MonitorMode {
+		expectedValue = "0xdeadbeefdeadbeef"
+	}
+
+	upChecker := ec.NewProcessUprobeChecker("uprobe-override-cel-register").
+		WithProcess(ec.NewProcessChecker().
+			WithBinary(sm.Full(bin))).
+		WithSymbol(sm.Full(uprobeCELSymbol))
+	overrideCnt := uint64(1)
+	postCnt := uint64(1)
+	return &policytest.Scenario{
+		Name:         "increment a raw return register with CEL",
+		Trigger:      policytest.NewCmdTrigger(bin, "2", expectedValue).ExpectExitCode(0),
+		EventChecker: ec.NewUnorderedEventChecker(upChecker),
+		ActCountChecker: policytest.ActionCounts{
+			Post:     &postCnt,
+			Override: &overrideCnt,
 		},
 	}
 }).RegisterAtInit()

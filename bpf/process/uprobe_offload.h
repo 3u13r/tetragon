@@ -25,6 +25,7 @@ struct reg_assignment {
 #define ASM_ASSIGNMENT_TYPE_REG	      2
 #define ASM_ASSIGNMENT_TYPE_REG_OFF   3
 #define ASM_ASSIGNMENT_TYPE_REG_DEREF 4
+#define ASM_ASSIGNMENT_TYPE_CEL       5
 
 struct uprobe_regs {
 	struct reg_assignment ass[REGS_MAX];
@@ -39,28 +40,55 @@ struct {
 	__type(value, struct uprobe_regs);
 } regs_map SEC(".maps");
 
+struct sleepable_offload_data {
+	__u32 idx;
+	__u32 pad;
+	__u64 values[REGS_MAX];
+};
+
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 1); // will be resized by agent when needed
 	__type(key, __u64);
-	__type(value, __u32);
+	__type(value, struct sleepable_offload_data);
 	__uint(map_flags, BPF_F_NO_PREALLOC);
 } sleepable_offload SEC(".maps");
 
-FUNC_INLINE void do_uprobe_override(void *ctx, __u32 idx)
+FUNC_INLINE void do_uprobe_override(void *ctx, __u32 idx, struct msg_generic_kprobe *e)
 {
+	struct sleepable_offload_data *data, tmp = { .idx = idx };
 	__u64 id = get_current_pid_tgid();
-	__u32 *idxp;
+	struct uprobe_regs *regs;
+	__u32 i;
+
+	regs = map_lookup_elem(&regs_map, &idx);
+	if (!regs)
+		return;
+
+	for (i = 0; i < REGS_MAX && i < regs->cnt; i++) {
+		struct reg_assignment *ass = &regs->ass[i];
+		__u16 arg_mask = ass->src;
+
+		if (ass->type != ASM_ASSIGNMENT_TYPE_CEL)
+			continue;
+
+#pragma unroll
+		for (int arg = 0; arg < MAX_POSSIBLE_ARGS; arg++) {
+			if ((arg_mask & (1U << arg)) && !is_arg_ok(e, arg))
+				return;
+		}
+		tmp.values[i] = cel_expr(ass->off, e->argsoff, e->args, ctx);
+	}
 
 	/*
 	 * This should not happen, it means that the override program was
 	 * not executed for some reason.
 	 */
-	idxp = with_errmetrics_ptr(map_lookup_elem, &sleepable_offload, &id);
-	if (idxp)
-		*idxp = idx;
+	data = with_errmetrics_ptr(map_lookup_elem, &sleepable_offload, &id);
+	if (data)
+		*data = tmp;
 	else
-		with_errmetrics(map_update_elem, &sleepable_offload, &id, &idx, BPF_ANY);
+		with_errmetrics(map_update_elem, &sleepable_offload, &id, &tmp, BPF_ANY);
 }
 
 FUNC_INLINE __u64
@@ -76,17 +104,19 @@ FUNC_INLINE int
 uprobe_offload(struct pt_regs *ctx)
 {
 	__u64 val = 0, id = get_current_pid_tgid();
+	struct sleepable_offload_data *data, tmp;
 	struct reg_assignment *ass;
 	struct uprobe_regs *regs;
-	__u32 *idx, i;
+	__u32 i;
 	int err;
 
-	idx = map_lookup_elem(&sleepable_offload, &id);
-	if (!idx)
+	data = map_lookup_elem(&sleepable_offload, &id);
+	if (!data)
 		return 0;
+	tmp = *data;
 	map_delete_elem(&sleepable_offload, &id);
 
-	regs = map_lookup_elem(&regs_map, idx);
+	regs = map_lookup_elem(&regs_map, &tmp.idx);
 	if (!regs)
 		return 0;
 
@@ -111,6 +141,9 @@ uprobe_offload(struct pt_regs *ctx)
 			err = probe_read_user(&val, sizeof(val), (void *)val + ass->off);
 			if (!err)
 				write_reg(ctx, ass->dst, ass->dst_size, val);
+			break;
+		case ASM_ASSIGNMENT_TYPE_CEL:
+			write_reg(ctx, ass->dst, ass->dst_size, tmp.values[i]);
 			break;
 		case ASM_ASSIGNMENT_TYPE_NONE:
 		default:

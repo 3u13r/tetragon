@@ -2421,7 +2421,7 @@ selector_arg_offset(void *ctx, struct bpf_map_def *tailcalls,
 					break;
 			}
 
-			if (!cel_expr(filter->index, e->argsoff, e->args))
+			if (!cel_expr(filter->index, e->argsoff, e->args, ctx))
 				return 0;
 			continue;
 		}

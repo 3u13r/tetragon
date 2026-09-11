@@ -252,6 +252,7 @@ func loadSingleUprobeSensor(uprobeEntry *genericUprobe, args sensors.LoadProbeAr
 	if entry := uprobeEntry.loadArgs.selectors.entry; entry != nil {
 		if celbpf.EnabledInBPF() {
 			rewriteProg["generic_uprobe_filter_arg"] = entry.CelExprFunctions().RewriteProg
+			rewriteProg["generic_uprobe_actions"] = entry.CelExprFunctions().RewriteProg
 		}
 	}
 	load.RewriteProg = rewriteProg
@@ -368,6 +369,7 @@ func loadMultiUprobeSensor(ids []idtable.EntryID, args sensors.LoadProbeArgs) er
 		if entry := uprobeEntry.loadArgs.selectors.entry; entry != nil {
 			if celbpf.EnabledInBPF() {
 				rewriteProg["generic_uprobe_filter_arg"] = entry.CelExprFunctions().RewriteProg
+				rewriteProg["generic_uprobe_actions"] = entry.CelExprFunctions().RewriteProg
 			}
 		}
 
@@ -615,6 +617,18 @@ func validateUprobeFeatures(spec *v1alpha1.UProbeSpec, has *uprobeHas) error {
 			return errors.New("can't use override regs action, no kernel support")
 		}
 		has.sleepableOffload = true
+	}
+
+	for _, selector := range spec.Selectors {
+		for _, action := range selector.MatchActions {
+			for _, assignment := range action.ArgRegs {
+				_, value, ok := strings.Cut(assignment, "=")
+				value = strings.TrimSpace(value)
+				if ok && strings.HasPrefix(value, "cel(") && strings.HasSuffix(value, ")") && !celbpf.Supported() {
+					return errors.New("can't use CEL register override, CEL BPF is not supported in kernel")
+				}
+			}
+		}
 	}
 
 	if selectors.HasSet(spec.Selectors) {

@@ -292,6 +292,8 @@ type RegAssignment struct {
 	Off     uint64
 }
 
+const RegAssignmentTypeCEL uint8 = 5
+
 const (
 	UPROBE_REGS_MAX = 18
 )

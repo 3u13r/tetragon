@@ -55,6 +55,25 @@ func addMatchCelExpr(
 	return arg_indexes, nil
 }
 
+func addCelValueExpr(
+	exprs *CelExprFunctions,
+	celExpr string,
+	sig, data []v1alpha1.KProbeArg,
+) (uint32, []uint16, error) {
+	nExprs := len(*exprs)
+	if nExprs >= MaxCelExprFunctions {
+		return 0, nil, fmt.Errorf("cannot allocate new CEL function: no more than %d CEL expressions are allowed per policy", MaxCelExprFunctions)
+	}
+
+	insts, argIndexes, err := celbpf.CompileValueFn(CelExprFuncName(nExprs), celExpr, sig, data)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	*exprs = append(*exprs, insts)
+	return uint32(nExprs), argIndexes, nil
+}
+
 func parseMatchCelExpr(
 	k *KernelSelectorState,
 	arg *v1alpha1.ArgSelector,

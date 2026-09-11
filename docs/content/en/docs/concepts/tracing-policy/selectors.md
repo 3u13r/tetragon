@@ -505,7 +505,7 @@ Match the interpreter instead:
 
 {{< warning >}}
 `matchParentBinaries` selector can be used only with BPF map `parents_map` enabled (option `--parents-map-enabled`), which adds
-additional memory overhead. 
+additional memory overhead.
 {{< /warning >}}
 
 Parent binaries filter provides filtering based on current process parent
@@ -1169,7 +1169,7 @@ uprobes:
   - matchActions:
     - action: Override
       argRegs:
-      - "rax=11"
+      - "rax=cel(rbx + 5)"
       - "rbp=(%rsp)"
       - "rip=8(%rsp)"
       - "rsp=8%rsp"
@@ -1184,6 +1184,11 @@ following types:
 - register plus offset `rip=8%rsp`
 - dereference of register `rbp=(%rsp)`
 - dereference of register plus offset `rsp=8(%rsp)`
+- CEL expression `rax=cel(rbx + 5)`
+
+A CEL register expression can reference the uprobe's captured `argN` and `dataN`
+values as well as raw architecture registers. It must return an `int` or `uint`.
+Its 64-bit result is written using the destination register's width.
 
 {{< note >}}
 This interface is likely to be changed in the future.
@@ -1708,7 +1713,7 @@ This policy will set the value of the first argument of the `pizza()` function t
 
 #### USDT
 
-For USDT probes, the `Set` action allows writing a value to a configured probe argument. 
+For USDT probes, the `Set` action allows writing a value to a configured probe argument.
 The argument needs to meet a few conditions:
 
 - It's stored in memory as `USDT deref` argument
@@ -2168,7 +2173,7 @@ For larger sets of values, consider using the `InMap` or `NotInMap`
 operators which store values in a BPF map.
 These are limited only by the amount of available memory.
 
-{{< caution >}} 
+{{< caution >}}
 The `InMap` and `NotInMap` operators also support the range notation described
 for the `InRange` operator. However, using range notation with `InMap` or
 `NotInMap` consumes more memory, because each value in the range is added

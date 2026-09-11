@@ -54,6 +54,15 @@ var intTypes = []intType{
 	{u32Ty},
 }
 
+func isIntegerType(ty *cgTypes.Type) bool {
+	for _, integerType := range intTypes {
+		if ty.TypeName() == integerType.ty.TypeName() {
+			return true
+		}
+	}
+	return false
+}
+
 func intCmpOperatorFnOverloads(op string) []fnOverload {
 	ret := make([]fnOverload, 0, len(intTypes))
 	for _, ity := range intTypes {

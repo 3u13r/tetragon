@@ -1253,7 +1253,7 @@ func parseRateLimit(str string, scopeStr string) (uint32, uint32, error) {
 	return uint32(rateLimit), scope, nil
 }
 
-func ParseMatchAction(k *KernelSelectorState, action *v1alpha1.ActionSelector, actionArgTable *idtable.Table, selIdx int) error {
+func parseMatchAction(k *KernelSelectorState, action *v1alpha1.ActionSelector, actionArgTable *idtable.Table, selIdx int, sig, data []v1alpha1.KProbeArg) error {
 	act, ok := actionTypeTable[strings.ToLower(action.Action)]
 	if !ok {
 		return fmt.Errorf("parseMatchAction: ActionType %s unknown", action.Action)
@@ -1276,7 +1276,7 @@ func ParseMatchAction(k *KernelSelectorState, action *v1alpha1.ActionSelector, a
 	switch act {
 	case ActionTypeOverride:
 		if k.isUprobe {
-			err := parseOverrideRegs(k, selIdx, action.ArgRegs, uint64(action.ArgError), k.overrideActionIPDelta)
+			err := parseOverrideRegs(k, selIdx, action.ArgRegs, uint64(action.ArgError), k.overrideActionIPDelta, sig, data)
 			if err != nil {
 				return err
 			}
@@ -1353,6 +1353,10 @@ func ParseMatchAction(k *KernelSelectorState, action *v1alpha1.ActionSelector, a
 	return nil
 }
 
+func ParseMatchAction(k *KernelSelectorState, action *v1alpha1.ActionSelector, actionArgTable *idtable.Table, selIdx int) error {
+	return parseMatchAction(k, action, actionArgTable, selIdx, nil, nil)
+}
+
 func ParseMatchWorkloads(k *KernelSelectorState, workload *v1alpha1.WorkloadsSelector, selIdx int) error {
 	if workload == nil {
 		return nil
@@ -1404,12 +1408,16 @@ func ParseMatchWorkloads(k *KernelSelectorState, workload *v1alpha1.WorkloadsSel
 }
 
 func ParseMatchActions(k *KernelSelectorState, actions []v1alpha1.ActionSelector, actionArgTable *idtable.Table, selIdx int) error {
+	return parseMatchActions(k, actions, actionArgTable, selIdx, nil, nil)
+}
+
+func parseMatchActions(k *KernelSelectorState, actions []v1alpha1.ActionSelector, actionArgTable *idtable.Table, selIdx int, sig, data []v1alpha1.KProbeArg) error {
 	if len(actions) > 3 {
 		return fmt.Errorf("only %d actions are support for selector (current number of values is %d)", 3, len(actions))
 	}
 	loff := AdvanceSelectorLength(&k.data)
 	for _, a := range actions {
-		if err := ParseMatchAction(k, &a, actionArgTable, selIdx); err != nil {
+		if err := parseMatchAction(k, &a, actionArgTable, selIdx, sig, data); err != nil {
 			return err
 		}
 	}
@@ -1850,7 +1858,7 @@ func InitKernelSelectorState(args *KernelSelectorArgs) (*KernelSelectorState, er
 		if err := ParseMatchWorkloads(k, selector.MatchWorkloads, selIdx); err != nil {
 			return fmt.Errorf("parseMatchWorkloads  error: %w", err)
 		}
-		if err := ParseMatchActions(k, selector.MatchActions, args.ActionArgTable, selIdx); err != nil {
+		if err := parseMatchActions(k, selector.MatchActions, args.ActionArgTable, selIdx, args.Args, args.Data); err != nil {
 			return fmt.Errorf("parseMatchActions error: %w", err)
 		}
 		return nil

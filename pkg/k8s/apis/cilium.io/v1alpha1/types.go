@@ -341,7 +341,8 @@ type ActionSelector struct {
 	// An arg value for the set action
 	ArgValue uint32 `json:"argValue"`
 	// +kubebuilder:validation:Optional
-	// An arg value for the override action, uprobe only.
+	// Register assignments for the override action, uprobe only. The right-hand side may be a
+	// CEL expression returning int or uint, for example: rax=cel(arg0 + 1).
 	ArgRegs []string `json:"argRegs,omitempty"`
 	// +kubebuilder:validation:Optional
 	// An arg value for the override action, uprobe only.

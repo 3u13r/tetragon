@@ -62,7 +62,35 @@ func Compile(celExpr string, sig, data []v1alpha1.KProbeArg, labelPrefix string)
 	}
 
 	compiler := newCompiler(ast, source, sig, data, labelPrefix)
-	return compiler.compile()
+	return compiler.compile(resultTypeBool)
+}
+
+func CompileValue(celExpr string, sig, data []v1alpha1.KProbeArg, labelPrefix string) (asm.Instructions, []uint16, error) {
+	source := cgCommon.NewTextSource(celExpr)
+	parser, err := cgParser.NewParser()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed initialize CEL parser: %w", err)
+	}
+
+	ast, errs := parser.Parse(source)
+	if len(errs.GetErrors()) > 0 {
+		return nil, nil, fmt.Errorf("failed to parse CEL expresion %q: %s", celExpr, errs.ToDisplayString())
+	}
+
+	checkerEnv, err := newCheckerEnv(sig, data)
+	if err != nil {
+		return nil, nil, err
+	}
+	checkerAddRawRegisters(checkerEnv)
+
+	ast, errs = cgChecker.Check(ast, source, checkerEnv)
+	if len(errs.GetErrors()) > 0 {
+		return nil, nil, fmt.Errorf("check failed on CEL expresion %q: %s", celExpr, errs.ToDisplayString())
+	}
+
+	compiler := newCompiler(ast, source, sig, data, labelPrefix)
+	compiler.cg.preserveContext()
+	return compiler.compile(resultTypeInteger)
 }
 
 type s struct {
@@ -78,8 +106,8 @@ func btfCelExprTy(fnName string) *btf.Func {
 		Name: fnName,
 		Type: &btf.FuncProto{
 			Return: &btf.Int{
-				Name:     "s32",
-				Size:     4,
+				Name:     "s64",
+				Size:     8,
 				Encoding: btf.Signed,
 			},
 			Params: []btf.FuncParam{},
@@ -106,4 +134,14 @@ func CompileFn(fnName, celExpr string, sig, data []v1alpha1.KProbeArg) (asm.Inst
 	fnTy := btfCelExprTy(fnName)
 	insns[0] = btf.WithFuncMetadata(insns[0].WithSymbol(fnTy.Name), fnTy).WithSource(s{celExpr})
 	return insns, arg_indexes, nil
+}
+
+func CompileValueFn(fnName, celExpr string, sig, data []v1alpha1.KProbeArg) (asm.Instructions, []uint16, error) {
+	insns, argIndexes, err := CompileValue(celExpr, sig, data, fnName)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to compile CEL value expression %q: %w", celExpr, err)
+	}
+	fnTy := btfCelExprTy(fnName)
+	insns[0] = btf.WithFuncMetadata(insns[0].WithSymbol(fnTy.Name), fnTy).WithSource(s{celExpr})
+	return insns, argIndexes, nil
 }

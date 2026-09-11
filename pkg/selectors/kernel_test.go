@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -22,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/cilium/tetragon/pkg/api/processapi"
 	"github.com/cilium/tetragon/pkg/k8s/apis/cilium.io/v1alpha1"
 
 	"github.com/cilium/tetragon/pkg/config"
@@ -1051,6 +1053,33 @@ func TestParseMatchAction(t *testing.T) {
 	if err := ParseMatchActions(ks, act, &actionArgTable, 0); err != nil || bytes.Equal(expected, d.e[0:d.off]) == false {
 		t.Errorf("parseMatchActions: error %v expected %v bytes %v parsing %v\n", err, expected, d.e[0:d.off], act)
 	}
+}
+
+func TestParseOverrideRegisterCEL(t *testing.T) {
+	dst := "rax"
+	if runtime.GOARCH == "arm64" {
+		dst = "x0"
+	}
+	celExprs := &CelExprFunctions{}
+	state, err := InitKernelSelectorState(&KernelSelectorArgs{
+		Selectors: []v1alpha1.KProbeSelector{{
+			MatchActions: []v1alpha1.ActionSelector{{
+				Action:  "Override",
+				ArgRegs: []string{dst + "=cel(arg0 + int32(41))"},
+			}},
+		}},
+		Args:     []v1alpha1.KProbeArg{{Type: "int"}},
+		IsUprobe: true,
+		CelExprs: celExprs,
+	})
+	require.NoError(t, err)
+	require.Len(t, *celExprs, 1)
+
+	regs := state.Regs()[0]
+	require.Len(t, regs, 1)
+	require.Equal(t, processapi.RegAssignmentTypeCEL, regs[0].Type)
+	require.Equal(t, uint16(1), regs[0].Src)
+	require.Equal(t, uint64(0), regs[0].Off)
 }
 
 func TestParseMatchActionMax(t *testing.T) {

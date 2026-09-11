@@ -703,6 +703,19 @@ func TestUprobeOverrideRegsAction_8bytes(t *testing.T) {
 	}
 }
 
+func TestUprobeOverrideRegsActionCEL(t *testing.T) {
+	if !celbpf.Supported() {
+		t.Skip("skipping CEL register override test, CEL BPF is not supported in kernel")
+	}
+
+	switch runtime.GOARCH {
+	case "amd64":
+		testUprobeOverrideRegsActionSize(t, "rax=cel(rax + 5)", "0xdeadbeefdeadbef4")
+	case "arm64":
+		testUprobeOverrideRegsActionSize(t, "x0=cel(x0 + 5)", "0xdeadbeefdeadbef4")
+	}
+}
+
 func TestUprobeOverrideRegsAction_4bytes(t *testing.T) {
 	switch runtime.GOARCH {
 	case "amd64":

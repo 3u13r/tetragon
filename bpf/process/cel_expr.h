@@ -9,42 +9,42 @@
  */
 
 #if defined(__LARGE_BPF_PROG) && (defined(GENERIC_KPROBE) || defined(GENERIC_UPROBE))
-int cel_expr_0(long *argsoff, char *args);
-int cel_expr_1(long *argsoff, char *args);
-int cel_expr_2(long *argsoff, char *args);
-int cel_expr_3(long *argsoff, char *args);
-int cel_expr_4(long *argsoff, char *args);
-int cel_expr_5(long *argsoff, char *args);
-int cel_expr_6(long *argsoff, char *args);
-int cel_expr_7(long *argsoff, char *args);
+long cel_expr_0(long *argsoff, char *args, void *ctx);
+long cel_expr_1(long *argsoff, char *args, void *ctx);
+long cel_expr_2(long *argsoff, char *args, void *ctx);
+long cel_expr_3(long *argsoff, char *args, void *ctx);
+long cel_expr_4(long *argsoff, char *args, void *ctx);
+long cel_expr_5(long *argsoff, char *args, void *ctx);
+long cel_expr_6(long *argsoff, char *args, void *ctx);
+long cel_expr_7(long *argsoff, char *args, void *ctx);
 
-static __attribute__((noinline)) __attribute__((__unused__)) int cel_expr(int id, long *argsoff, char *args)
+static __attribute__((noinline)) __attribute__((__unused__)) long cel_expr(int id, long *argsoff, char *args, void *ctx)
 {
 	switch (id) {
 	case 0:
-		return cel_expr_0(argsoff, args);
+		return cel_expr_0(argsoff, args, ctx);
 	case 1:
-		return cel_expr_1(argsoff, args);
+		return cel_expr_1(argsoff, args, ctx);
 	case 2:
-		return cel_expr_2(argsoff, args);
+		return cel_expr_2(argsoff, args, ctx);
 	case 3:
-		return cel_expr_3(argsoff, args);
+		return cel_expr_3(argsoff, args, ctx);
 	case 4:
-		return cel_expr_4(argsoff, args);
+		return cel_expr_4(argsoff, args, ctx);
 	case 5:
-		return cel_expr_5(argsoff, args);
+		return cel_expr_5(argsoff, args, ctx);
 	case 6:
-		return cel_expr_6(argsoff, args);
+		return cel_expr_6(argsoff, args, ctx);
 	case 7:
-		return cel_expr_7(argsoff, args);
+		return cel_expr_7(argsoff, args, ctx);
 	/* should not happen  */
 	default:
 		return 0;
 	}
 }
 #else
-FUNC_INLINE int
-cel_expr(int id, long *argsoff, char *args)
+FUNC_INLINE long
+cel_expr(int id, long *argsoff, char *args, void *ctx)
 {
 	return 0;
 }

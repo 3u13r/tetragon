@@ -31,6 +31,13 @@ type compiler struct {
 	arg_indexes []uint16
 }
 
+type resultType uint8
+
+const (
+	resultTypeBool resultType = iota
+	resultTypeInteger
+)
+
 func newCompiler(ast *cgAst.AST, src cgCommon.Source, args, data []v1alpha1.KProbeArg, labelPrefix string) *compiler {
 	return &compiler{
 		ast:  ast,
@@ -254,6 +261,9 @@ func (c *compiler) compileIdent(s string) error {
 		}
 		return c.compileArg(uint16(len(c.args) + int(idx)))
 	}
+	if reg, ok := rawRegister(s); ok {
+		return c.cg.pushRegister(reg.offset, reg.size, scratchRegs[0])
+	}
 	return fmt.Errorf("BUG: ident %q unknown", s)
 }
 
@@ -280,15 +290,23 @@ func (c *compiler) compileExpr(expr cgAst.Expr) error {
 	return fmt.Errorf("unsupported CEL expr: %d (%+v)", expr.Kind(), expr)
 }
 
-func (c *compiler) compile() (asm.Instructions, []uint16, error) {
+func (c *compiler) compile(expectedResult resultType) (asm.Instructions, []uint16, error) {
 	expr := c.ast.Expr()
-	if cgAst.NavigateExpr(c.ast, expr).Type().Kind() != cgTypes.BoolKind {
-		return nil, nil, errors.New("expecting CEL expression to return bool")
+	resultType := cgAst.NavigateExpr(c.ast, expr).Type()
+	resultKind := resultType.Kind()
+	validResult := expectedResult == resultTypeBool && resultKind == cgTypes.BoolKind ||
+		expectedResult == resultTypeInteger && isIntegerType(resultType)
+	if !validResult {
+		return nil, nil, fmt.Errorf("unexpected CEL expression result type %v", resultKind)
 	}
 	if err := c.compileExpr(expr); err != nil {
 		return nil, nil, fmt.Errorf("failed to compile CEL expression: %w", err)
 	}
-	c.cg.emitPopBool(asm.R0)
+	if expectedResult == resultTypeBool {
+		c.cg.emitPopBool(asm.R0)
+	} else {
+		c.cg.emitPopInt64(asm.R0)
+	}
 	c.cg.emitRaw(asm.Return())
 
 	return c.cg.instructions(), c.arg_indexes, nil

@@ -22,6 +22,7 @@ var argArgs = asm.R2    // second argument
 type codeGenerator struct {
 	insts       asm.Instructions
 	stackTop    int16
+	ctxStack    int16
 	labelPrefix string
 	labelID     uint
 }
@@ -45,6 +46,35 @@ func (g *codeGenerator) instructions() asm.Instructions {
 
 func (g *codeGenerator) emitRaw(insts ...asm.Instruction) {
 	g.insts = append(g.insts, insts...)
+}
+
+func (g *codeGenerator) preserveContext() {
+	g.stackTop -= 8
+	g.ctxStack = g.stackTop
+	g.emitRaw(asm.StoreMem(asm.R10, g.ctxStack, asm.R3, asm.DWord))
+}
+
+func (g *codeGenerator) pushRegister(regOffset uint16, regSize uint8, tmp asm.Register) error {
+	if regOffset > math.MaxInt16 {
+		return fmt.Errorf("register offset %d overflows 16-bits", regOffset)
+	}
+
+	g.stackTop -= 8
+	g.emitRaw(asm.LoadMem(scratchRegs[1], asm.R10, g.ctxStack, asm.DWord))
+	switch regSize {
+	case 1:
+		g.emitRaw(asm.LoadMem(tmp, scratchRegs[1], int16(regOffset), asm.Byte))
+	case 2:
+		g.emitRaw(asm.LoadMem(tmp, scratchRegs[1], int16(regOffset), asm.Half))
+	case 4:
+		g.emitRaw(asm.LoadMem(tmp, scratchRegs[1], int16(regOffset), asm.Word))
+	case 8:
+		g.emitRaw(asm.LoadMem(tmp, scratchRegs[1], int16(regOffset), asm.DWord))
+	default:
+		return fmt.Errorf("unsupported register size %d", regSize)
+	}
+	g.emitRaw(asm.StoreMem(asm.R10, g.stackTop, tmp, asm.DWord))
+	return nil
 }
 
 func (g *codeGenerator) emitPushBool(val bool, tmp asm.Register) {

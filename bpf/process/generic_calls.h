@@ -1022,7 +1022,7 @@ do_action(void *ctx, __u32 i, struct selector_action *actions, bool *post, bool 
 		error = actions->act[++i];
 		if (enforce_mode) {
 #if defined(GENERIC_UPROBE)
-			do_uprobe_override(ctx, error);
+			do_uprobe_override(ctx, error, e);
 #else
 			do_override_action(error);
 #endif
@@ -1061,7 +1061,7 @@ do_action(void *ctx, __u32 i, struct selector_action *actions, bool *post, bool 
 		if (enforce_mode) {
 #if defined(GENERIC_UPROBE)
 			// value is discarded here
-			do_uprobe_override(ctx, index);
+			do_uprobe_override(ctx, index, e);
 #else
 			do_set_action(ctx, e, index, value);
 #endif

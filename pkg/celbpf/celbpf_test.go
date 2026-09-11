@@ -13,6 +13,7 @@ import (
 	"errors"
 	"math"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"testing"
 	"unsafe"
@@ -293,6 +294,40 @@ func evalCELBPF(t *testing.T, expr string, hookArgs []any, expectedVal uint32) {
 		dumpProg(t, prog)
 	}
 	require.Equal(t, expectedVal, val, "result of %q was %d and not %d", expr, val, expectedVal)
+}
+
+func TestCompileValueFn(t *testing.T) {
+	args := []v1alpha1.KProbeArg{{Type: "int64"}, {Type: "uint64"}}
+
+	_, indexes, err := CompileValueFn("value_fn", "arg0 + 2", args, nil)
+	require.NoError(t, err)
+	require.Equal(t, []uint16{0}, indexes)
+
+	_, indexes, err = CompileValueFn("value_fn", "arg1 + arg1", args, nil)
+	require.NoError(t, err)
+	require.Equal(t, []uint16{1}, indexes)
+
+	_, _, err = CompileValueFn("value_fn", "arg0 > 2", args, nil)
+	require.ErrorContains(t, err, "unexpected CEL expression result type")
+
+	intArgs := []v1alpha1.KProbeArg{{Type: "int"}}
+	_, indexes, err = CompileValueFn("value_fn", "arg0 + int32(41)", intArgs, nil)
+	require.NoError(t, err)
+	require.Equal(t, []uint16{0}, indexes)
+
+	reg := "rax"
+	if runtime.GOARCH == "arm64" {
+		reg = "x0"
+	}
+	insns, indexes, err := CompileValueFn("value_fn", reg+" + 5", args, nil)
+	require.NoError(t, err)
+	require.Empty(t, indexes)
+	require.Equal(t, asm.R10, insns[0].Dst)
+	require.Equal(t, asm.R3, insns[0].Src)
+	for _, insn := range insns {
+		require.NotEqual(t, asm.R6, insn.Dst)
+		require.NotEqual(t, asm.R6, insn.Src)
+	}
 }
 
 func TestArgExprs(t *testing.T) {
